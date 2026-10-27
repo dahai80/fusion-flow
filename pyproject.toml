@@ -38,7 +38,7 @@ testpaths = ["tests"]
 markers = [
     "bench: performance benchmarks (CI-only, run with -m bench)",
 ]
-addopts = "-m 'not bench'"
+addopts = "-m 'not bench' --cov=fusion_flow --cov-report=term --cov-fail-under=90"
 filterwarnings = [
     # KeyboardInterrupt test: the loop-level KI tears the task group down
     # before remaining start_soon coroutines get scheduled.

@@ -228,8 +228,8 @@ worker 持有时向 stderr 打告警。
 cd /path/to/fusion && source .venv/bin/activate
 cd fusion-flow
 pip install -e ".[test]"
-pytest tests/ -q                # 全量用例（含 kill -9 崩溃测试）
-pytest tests/ -q -m bench       # 吞吐冒烟基准（CI-only 标记）
+pytest tests/ -q                # 全量用例（含 kill -9 崩溃测试）；覆盖率门槛 90%
+pytest tests/ -q -m bench       # 性能基准：enqueue p99、claim+ack 循环、10 万行 dequeue 延迟比
 ruff check . && ruff format --check .
 ```
 

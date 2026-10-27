@@ -249,8 +249,8 @@ it warns on stderr when a live worker holds it.
 cd /path/to/fusion && source .venv/bin/activate
 cd fusion-flow
 pip install -e ".[test]"
-pytest tests/ -q                # full suite (crash/kill -9 tests included)
-pytest tests/ -q -m bench       # throughput smoke bench (CI-only marker)
+pytest tests/ -q                # full suite (crash/kill -9 tests included); coverage gate at 90%
+pytest tests/ -q -m bench       # perf bench: enqueue p99, claim+ack cycles, 100k-row dequeue ratio
 ruff check . && ruff format --check .
 ```
 

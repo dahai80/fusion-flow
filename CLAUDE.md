@@ -16,8 +16,8 @@ daemon — consumer apps embed it.
 cd /Users/dahai/fusion && source .venv/bin/activate   # REQUIRED first
 cd fusion-flow
 pip install -e ".[test]"          # editable install with test extras
-pytest tests/ -q                  # full suite (110 tests, incl. kill -9 crash recovery)
-pytest tests/ -q -m bench         # throughput smoke bench (excluded by default via addopts)
+pytest tests/ -q                  # full suite (110 tests, incl. kill -9 crash recovery); cov gate 90%
+pytest tests/ -q -m bench         # perf bench: enqueue p99, claim+ack cycles, 100k-row dequeue ratio (excluded by default via addopts)
 ruff check . && ruff format --check .
 ```
 
