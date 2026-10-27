@@ -165,6 +165,52 @@ pointers. Handler return values follow the same rule: return a `result_ref` stri
 - Every handler must be **idempotent**: a job can run more than once (retry after
   crash, retry after drain cancel, claim-timeout recovery).
 
+## Connectors (Side-Channel Sources)
+
+A connector bridges an external source (e.g. Google Drive) into the queue. Register
+before `run()`; the runner is a separate task next to the worker pool:
+
+```python
+from fusion_flow import DriveConnector
+
+
+def on_new_file(folder_id, file):
+    # Business mapping lives HERE, not in the library.
+    return JobSpec(kind="photo", payload={"file_id": file["id"]}, dedup_key=f"drive:{file['id']}")
+
+
+conn = DriveConnector(
+    drive_client,
+    on_new_file=on_new_file,
+    event_bus=flow.event_bus,
+    inbox_dir="./inbox",
+    output_folder_id="...",
+    rejected_folder_id="...",
+)
+flow.attach_connector(conn, name="drive", interval_s=60, kinds={"photo"})
+```
+
+The `Connector` protocol is three methods: `poll() -> list[JobSpec]`, `commit()`,
+`on_job_done(job, result_ref)`. Contracts worth memorizing:
+
+- **Zero-loss backpressure**: if any enqueue raises `QueueFull`, the WHOLE poll round
+  is treated as failed — `commit()` is not called, so the connector's cursor (Drive
+  pageToken) stays put and the next round re-pulls the same files. Specs are never
+  dropped on a full queue; the upstream will not re-deliver them for you.
+- **Invalid specs are dropped, not fatal**: an oversized payload or malformed kind
+  from a business callback emits a `connector_spec_dropped` event and the round
+  continues (a poison spec must not wedge the connector forever).
+- **Full isolation**: a raising `poll()` never touches the workers — it logs a
+  `connector_error` event and backs off (5s base, 300s cap). Jobs already in the
+  queue keep flowing.
+- **Reverse path**: `on_job_done` fires post-ack (scoped by `kinds`), retried with
+  backoff; when retries are exhausted a `connector_error` event is emitted for
+  compensation — the job's terminal state is never rolled back.
+- `DriveConnector` stores its pageToken in `flow_kv` with **no TTL** (durable cursor,
+  not a cache) and takes an injected transport client — the library has zero Google
+  imports; `pip install "fusion-flow[drive]"` pulls the client libraries for the
+  caller-side adapter.
+
 ## Troubleshooting Quick Reference
 
 | Symptom | Check |
@@ -174,6 +220,7 @@ pointers. Handler return values follow the same rule: return a `result_ref` stri
 | `database is locked` errors | More than one process writing; only one process may run `flow.run()` per database — route reads through the CLI instead |
 | Rate limit "not working" | Process restarted (bucket reset) or multiple enqueueing processes; the limiter is in-memory by design |
 | `dead_lettered` job you fixed | `flow retry <id>` copies it to a fresh queued job with `attempts=0` |
+| Connector stopped enqueuing | `connector_error` events in `flow show <id> --events` / event list; the runner backs off exponentially and keeps retrying |
 | Disk growing | `flow purge --older-than 7d` for terminal jobs, `flow vacuum` to reclaim space |
 
 ## CLI Reference

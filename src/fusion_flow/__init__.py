@@ -1,6 +1,8 @@
 import logging
 
 from .clock import Clock, RealClock, parse_duration
+from .connector import Connector, ConnectorRunner
+from .connectors import DriveClient, DriveConnector
 from .errors import (
     ConnectorError,
     FlowError,
@@ -22,7 +24,7 @@ from .state import aggregate_subtasks, check_job_transition
 from .storage import Storage
 from .worker_pool import TaskContext, WorkerConfig, WorkerPool
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 logging.getLogger("fusion_flow").addHandler(logging.NullHandler())
 
@@ -42,6 +44,10 @@ __all__ = [
     "RateLimiter",
     "WorkerPool",
     "WorkerConfig",
+    "Connector",
+    "ConnectorRunner",
+    "DriveClient",
+    "DriveConnector",
     "Backoff",
     "Clock",
     "RealClock",

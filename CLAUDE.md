@@ -16,7 +16,7 @@ daemon — consumer apps embed it.
 cd /Users/dahai/fusion && source .venv/bin/activate   # REQUIRED first
 cd fusion-flow
 pip install -e ".[test]"          # editable install with test extras
-pytest tests/ -q                  # full suite (94 tests, incl. kill -9 crash recovery)
+pytest tests/ -q                  # full suite (110 tests, incl. kill -9 crash recovery)
 pytest tests/ -q -m bench         # throughput smoke bench (excluded by default via addopts)
 ruff check . && ruff format --check .
 ```
@@ -38,6 +38,9 @@ src/fusion_flow/
 ├── queue_service.py   # enqueue (dedup/backpressure), atomic claim/ack/nack, recovery, purge
 ├── event_bus.py       # post-commit callbacks + event retention + flow_kv TTL
 ├── worker_pool.py     # N anyio workers, exception classification contract, drain semantics
+├── connector.py       # Connector protocol + ConnectorRunner (backpressure/isolation)
+├── connectors/
+│   └── drive.py       # DriveConnector: changes.list polling, pageToken in flow_kv
 ├── flow.py            # Flow facade + WorkerLock (sidecar file lock) + run() lifecycle
 └── cli.py             # argparse ops surface
 ```
@@ -59,6 +62,13 @@ src/fusion_flow/
   post-commit; broken callbacks log exc_info and never propagate.
 - `synchronous=NORMAL` default: kill -9 loses nothing, power loss may; caller overrides
   via `sqlite_pragmas={"synchronous": "FULL"}`. `journal_mode=WAL` is NOT overridable.
+- **Connector backpressure** (connector.py): `QueueFull` -> whole poll round failed,
+  `commit()` NOT called (cursor/pageToken stays put, round re-pulled — zero loss).
+  `PayloadTooLarge`/`ValueError` -> that spec dropped + `connector_spec_dropped` event,
+  round continues. poll/commit exceptions -> `connector_error` event + backoff, workers
+  never blocked. `on_job_done` retries then alerts; job terminal state never rolls back.
+- **Drive pageToken** (connectors/drive.py): persisted to flow_kv ONLY by `commit()`,
+  NEVER with a TTL; transport client injected by caller (zero google imports in-lib).
 
 ## Known Pitfalls
 
@@ -68,10 +78,11 @@ src/fusion_flow/
   loop) — the KI test must wrap `anyio.run()` in a sync test to catch it.
 - Only one process may run `Flow.run()` per database (`WorkerLockHeld` otherwise).
 
-## Pending Work (post-M1)
+## Pending Work (post-M2)
 
-- M2: `connector.py` ConnectorRunner + `connectors/drive.py` (QueueFull = whole poll round
-  fails, pageToken NOT advanced) — see `/Users/dahai/fusion/architecture/fusion-flow-archi-plan-1027.md` §M2.
+- M2-3 first-consumer integration (ai-apparelmockup) happens in the consumer repo, not here.
+- Reserved, NOT implemented (until a second consumer asks): local-dir watcher, S3/MinIO
+  connectors — see archi-plan §4.7 "预留位不实现".
 
 ## Monorepo Context
 

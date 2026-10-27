@@ -6,6 +6,13 @@ from pathlib import Path
 import anyio
 
 from .clock import Clock, RealClock
+from .connector import (
+    DEFAULT_CONNECTOR_BACKOFF_BASE_S,
+    DEFAULT_CONNECTOR_BACKOFF_CAP_S,
+    DEFAULT_CONNECTOR_INTERVAL_S,
+    DEFAULT_ON_DONE_RETRIES,
+    ConnectorRunner,
+)
 from .errors import WorkerLockHeld
 from .event_bus import DEFAULT_EVENT_RETENTION_DAYS, EventBus
 from .models import DEFAULT_PAYLOAD_MAX_BYTES, FlowEvent, Job, JobSpec, JobView, StatsSnapshot
@@ -131,7 +138,38 @@ class Flow:
             ),
         )
         self.lock = WorkerLock(self.db_path)
+        self.connectors = []
         logger.info("flow initialized db=%s", self.db_path)
+
+    def attach_connector(
+        self,
+        connector,
+        *,
+        name: str | None = None,
+        interval_s: float = DEFAULT_CONNECTOR_INTERVAL_S,
+        kinds: set[str] | None = None,
+        backoff_base_s: float = DEFAULT_CONNECTOR_BACKOFF_BASE_S,
+        backoff_cap_s: float = DEFAULT_CONNECTOR_BACKOFF_CAP_S,
+        on_done_retries: int = DEFAULT_ON_DONE_RETRIES,
+    ) -> None:
+        # Register before run(); run() spawns one ConnectorRunner task per
+        # connector inside the worker task group (same lock, same drain).
+        # kinds=None means on_job_done sees EVERY acked job — scope it to the
+        # kinds this connector creates to avoid useless reverse-path calls.
+        runner = ConnectorRunner(
+            name or type(connector).__name__,
+            connector,
+            self.queue,
+            self.event_bus,
+            clock=self.clock,
+            interval_s=interval_s,
+            kinds=kinds,
+            backoff_base_s=backoff_base_s,
+            backoff_cap_s=backoff_cap_s,
+            on_done_retries=on_done_retries,
+        )
+        self.connectors.append(runner)
+        logger.info("attached connector %s interval=%ss", runner.name, interval_s)
 
     def handler(self, kind: str, *, fail_fast: bool = False):
         def decorate(fn):
@@ -218,6 +256,8 @@ class Flow:
         try:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(self.pool.run)
+                for runner in self.connectors:
+                    tg.start_soon(runner.run)
                 try:
                     yield
                 finally:

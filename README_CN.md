@@ -149,6 +149,47 @@ JobSpec(kind="resize", payload=my_8mb_image_bytes)  # PayloadTooLarge，且语�
 - 所有 handler 必须**幂等**：一个 job 可能跑多次（崩溃后重试、drain 取消后重试、
   claim 超时回收）。
 
+## Connector（旁路数据源）
+
+Connector 把外部数据源（如 Google Drive）桥接进队列。`run()` 之前注册，runner 作为
+独立任务与 worker 池并行：
+
+```python
+from fusion_flow import DriveConnector
+
+
+def on_new_file(folder_id, file):
+    # 目录 -> 业务映射在调用方这里，库不理解业务。
+    return JobSpec(kind="photo", payload={"file_id": file["id"]}, dedup_key=f"drive:{file['id']}")
+
+
+conn = DriveConnector(
+    drive_client,
+    on_new_file=on_new_file,
+    event_bus=flow.event_bus,
+    inbox_dir="./inbox",
+    output_folder_id="...",
+    rejected_folder_id="...",
+)
+flow.attach_connector(conn, name="drive", interval_s=60, kinds={"photo"})
+```
+
+`Connector` 协议三个方法：`poll() -> list[JobSpec]`、`commit()`、
+`on_job_done(job, result_ref)`。契约要点：
+
+- **零丢失背压**：任一 enqueue 抛 `QueueFull`，**整轮 poll 视为失败**——`commit()`
+  不被调用，connector 游标（Drive pageToken）原地不动，下一轮重拉同一批文件。
+  队列满时绝不丢弃 spec——上游不会替你重推。
+- **非法 spec 丢弃但不致命**：业务回调产出的超大 payload / 非法 kind 发
+  `connector_spec_dropped` 事件后丢弃，本轮继续（毒 spec 不能永久卡死 connector）。
+- **完全隔离**：`poll()` 抛异常永远不影响 worker——记 `connector_error` 事件并退避
+  （基数 5s，封顶 300s）。已入队任务照常消费。
+- **反向通路**：`on_job_done` 在 ack 后触发（按 `kinds` 过滤），带退避重试；重试耗尽
+  发 `connector_error` 事件供补偿——**Job 终态绝不回滚**。
+- `DriveConnector` 的 pageToken 存 `flow_kv`，**永不设 TTL**（这是持久游标不是缓存）；
+  传输 client 由调用方注入——库本身零 Google import，`pip install "fusion-flow[drive]"`
+  只为调用方侧的适配器装客户端库。
+
 ## 故障排查速查表
 
 | 症状 | 排查 |
@@ -158,6 +199,7 @@ JobSpec(kind="resize", payload=my_8mb_image_bytes)  # PayloadTooLarge，且语�
 | `database is locked` 报错 | 多进程同时写；每库只允许一个进程 `flow.run()`，读走 CLI |
 | 限流"不生效" | 进程重启过（桶清零）或存在多个入队进程；限流器设计上就是进程内存态 |
 | 死信修好了想重跑 | `flow retry <id>` 复制成全新 queued job，`attempts=0` |
+| Connector 不再入队 | 事件列表里的 `connector_error`；runner 指数退避并持续重试 |
 | 磁盘增长 | `flow purge --older-than 7d` 清终态任务，`flow vacuum` 回收空间 |
 
 ## CLI 参考

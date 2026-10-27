@@ -37,6 +37,17 @@ class EventBus:
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
+    def emit(self, event: str, job_id: str | None = None, data: dict | None = None) -> None:
+        # Standalone (non-transition) events, e.g. connector lifecycle errors.
+        # Same guarantees as queue transitions: row first, callbacks after.
+        conn = self.storage.connection()
+        with conn:
+            conn.execute(
+                "INSERT INTO flow_events(job_id, subtask_id, event, data, ts) VALUES(?,?,?,?,?)",
+                (job_id, None, event, json.dumps(data or {}), self.clock.now_iso()),
+            )
+        self.dispatch(FlowEvent(event=event, job_id=job_id, data=data, ts=self.clock.now_iso()))
+
     def dispatch(self, event: FlowEvent) -> None:
         for callback in self.callbacks:
             try:
