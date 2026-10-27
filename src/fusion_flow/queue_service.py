@@ -163,6 +163,11 @@ class QueueService:
             (worker_id, now.isoformat(), expires.isoformat(), now.isoformat(), now.isoformat()),
         ).fetchall()
         if not rows:
+            # Legacy isolation: a 0-row UPDATE still opened an implicit write
+            # txn. Returning without ending it would hold the write lock until
+            # the next successful claim and block same-process enqueue from
+            # other threads (issue #1). Nothing to preserve — roll back.
+            conn.rollback()
             return None
         job = Job.from_dict(row_to_job(rows[0]))
         with conn:

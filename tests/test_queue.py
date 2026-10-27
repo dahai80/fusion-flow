@@ -212,3 +212,41 @@ def test_purge_removes_old_terminal_jobs(flow, fake_clock):
     count = flow.purge(timedelta(days=7), ["succeeded"])
     assert count == 1
     assert flow.get_job(job.id) is None
+
+
+def test_empty_claim_releases_write_lock(db_path, fake_clock):
+    # Issue #1: a worker claiming on an empty queue opens an implicit write
+    # txn (legacy isolation: 0-row DML still starts one). Returning without
+    # committing leaves the write lock held and blocks same-process enqueue
+    # from other threads until the next successful claim.
+    import threading
+
+    from fusion_flow.flow import Flow
+
+    flow = Flow(
+        db_path,
+        clock=fake_clock,
+        workers=1,
+        sqlite_pragmas={"busy_timeout": 200},
+    )
+    try:
+        claimed = threading.Event()
+        release = threading.Event()
+
+        def worker_claim():
+            assert flow.queue.claim("w-lock") is None
+            claimed.set()
+            release.wait(5)
+
+        t = threading.Thread(target=worker_claim)
+        t.start()
+        try:
+            assert claimed.wait(5)
+            # Same-process enqueue from another thread must NOT hit
+            # "database is locked" while the worker idles between claims.
+            flow.enqueue(JobSpec(kind="import", payload={"x": 1}))
+        finally:
+            release.set()
+            t.join()
+    finally:
+        flow.close()

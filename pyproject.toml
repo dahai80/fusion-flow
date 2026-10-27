@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fusion-flow"
-version = "0.2.0"
+version = "0.2.1"
 description = "Fusion-Flow — persistent in-process job orchestration library for the Fusion ecosystem (queue + state machine + rate limit + retry + resumable pipelines)"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
