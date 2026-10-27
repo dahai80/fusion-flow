@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fusion-flow"
+version = "0.1.0"
+description = "Fusion-Flow — persistent in-process job orchestration library for the Fusion ecosystem (queue + state machine + rate limit + retry + resumable pipelines)"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.0.0",
+    "python-ulid>=2.0.0",
+]
+
+[project.optional-dependencies]
+drive = [
+    "google-api-python-client>=2.0.0",
+    "google-auth>=2.0.0",
+]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+flow = "fusion_flow.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "bench: performance benchmarks (CI-only, run with -m bench)",
+]
+addopts = "-m 'not bench'"
+filterwarnings = [
+    # KeyboardInterrupt test: the loop-level KI tears the task group down
+    # before remaining start_soon coroutines get scheduled.
+    "ignore:coroutine 'WorkerPool._worker_loop' was never awaited:RuntimeWarning",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
