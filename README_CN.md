@@ -55,6 +55,8 @@ def ocr(ctx, payload):  # 普通 def，不是 async def
   再加 `dedup_ttl=timedelta(minutes=5)` 可复用近期**已成功**的结果（返回的 Job
   `created=False`，带旧 `result_ref`）。
 - `clock=Clock(seed=...)` 可注入：退避、claim 过期、限流全部读它，测试从不真 sleep。
+- `flow.workers_active` 仅在 `run()` 持有 worker 锁期间为 `True`——接入健康检查。
+  worker 死掉后 enqueue 仍会成功，这个标志才是暴露真相的地方。
 
 ## Handler 异常分类
 
@@ -195,7 +197,7 @@ flow.attach_connector(conn, name="drive", interval_s=60, kinds={"photo"})
 | 症状 | 排查 |
 | --- | --- |
 | Job 卡在 `processing` | `flow show <id>` 看 `claim_expires_at`——过期后调度器自动回收；可用 `flow lease-reclaim` 手动触发 |
-| `flow.run()` 报 `WorkerLockHeld` | 另一个活进程占用该库的 worker：`flow locks` 查 `<db>.worker.lock` |
+| `flow.run()` 报 `WorkerLockHeld` | 报错自带持有者身份（pid、主机、起始时间、存活状态）。`flow locks` 显示同样信息。跨重启的持有者自动回收；其余情况 `flow unlock` 删除确认失效的锁文件（持有者活着时拒绝，`--force` 强制） |
 | `database is locked` 报错 | 多进程同时写；每库只允许一个进程 `flow.run()`，读走 CLI |
 | 限流"不生效" | 进程重启过（桶清零）或存在多个入队进程；限流器设计上就是进程内存态 |
 | 死信修好了想重跑 | `flow retry <id>` 复制成全新 queued job，`attempts=0` |
@@ -215,7 +217,8 @@ flow --db jobs.db <command>            # --db 默认 $FLOW_DB 或 flow.db；全�
   purge --older-than 7d --statuses succeeded,cancelled
   stats                                    队列快照（按状态、年龄、吞吐）
   vacuum                                   VACUUM 数据库
-  locks                                    worker 锁状态
+  locks                                    worker 锁状态 + 持有者身份
+  unlock [--force]                         删除失效的 worker 锁文件
   lease-reclaim                            回收过期 claim 重新入队
 ```
 

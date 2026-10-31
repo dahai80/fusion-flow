@@ -62,6 +62,9 @@ Key facts:
   `job.created=False` and the old `result_ref`).
 - `clock=Clock(seed=...)` is injectable for tests: backoff, claim expiry, and rate
   limits all read from it, so tests never sleep.
+- `flow.workers_active` is `True` only while `run()` holds the worker lock — wire it
+  into health checks. Enqueue keeps succeeding after a worker dies; this flag is what
+  reveals it.
 
 ## Handler Exception Classification
 
@@ -216,7 +219,7 @@ The `Connector` protocol is three methods: `poll() -> list[JobSpec]`, `commit()`
 | Symptom | Check |
 | --- | --- |
 | Job stuck in `processing` | `claim_expires_at` in `flow show <id>` — recovery fires once it passes; force it with `flow lease-reclaim` |
-| `WorkerLockHeld` on `flow.run()` | Another live process owns the workers for this DB: `flow locks` shows who holds `<db>.worker.lock` |
+| `WorkerLockHeld` on `flow.run()` | The error names the holder (pid, host, since when, alive or dead). `flow locks` shows the same. A holder from a previous boot is auto-reclaimed; otherwise `flow unlock` removes a provably stale lock file (refuses while the holder lives, `--force` to override) |
 | `database is locked` errors | More than one process writing; only one process may run `flow.run()` per database — route reads through the CLI instead |
 | Rate limit "not working" | Process restarted (bucket reset) or multiple enqueueing processes; the limiter is in-memory by design |
 | `dead_lettered` job you fixed | `flow retry <id>` copies it to a fresh queued job with `attempts=0` |
@@ -236,7 +239,8 @@ flow --db jobs.db <command>            # --db defaults to $FLOW_DB or flow.db; -
   purge --older-than 7d --statuses succeeded,cancelled
   stats                                    queue snapshot (by status, ages, throughput)
   vacuum                                   VACUUM the database
-  locks                                    worker-lock state
+  locks                                    worker-lock state + holder identity
+  unlock [--force]                         remove a stale worker-lock file
   lease-reclaim                            requeue jobs whose claims expired
 ```
 

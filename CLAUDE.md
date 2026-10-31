@@ -58,6 +58,10 @@ src/fusion_flow/
   terminal or `IllegalTransition` (active copy would collide with the partial dedup index).
 - **Crash safety**: claim timeout recovery counts as attempt+1 (poison-loop prevention);
   worker lock is a sidecar FILE (`<db>.worker.lock`, fcntl/msvcrt), never a DB row.
+  Acquire writes a holder record (pid/host/boot_id/ts) into the file; a failed acquire
+  reports holder detail. Previous-boot holders auto-reclaim (provably dead); same-boot
+  dead pids NEVER auto-reclaim (pid reuse / inherited fd) — `flow unlock [--force]` is
+  the manual path. `Flow.workers_active` = run() holds the lock (health checks).
 - **Events**: written in the same transaction as the transition; callbacks fire
   post-commit; broken callbacks log exc_info and never propagate.
 - `synchronous=NORMAL` default: kill -9 loses nothing, power loss may; caller overrides

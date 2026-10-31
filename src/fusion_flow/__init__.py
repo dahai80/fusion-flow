@@ -24,7 +24,7 @@ from .state import aggregate_subtasks, check_job_transition
 from .storage import Storage
 from .worker_pool import TaskContext, WorkerConfig, WorkerPool
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 logging.getLogger("fusion_flow").addHandler(logging.NullHandler())
 

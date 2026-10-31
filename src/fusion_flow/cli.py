@@ -6,7 +6,7 @@ import sys
 
 from .clock import parse_duration
 from .errors import FlowError
-from .flow import Flow
+from .flow import Flow, WorkerLock
 from .models import Job, StatsSnapshot
 
 logger = logging.getLogger("fusion_flow")
@@ -231,6 +231,20 @@ def cmd_vacuum(args) -> int:
     return EXIT_OK
 
 
+def _read_holder(lock_path: str) -> dict | None:
+    # Holder record written by the lock owner (0.2.2+); None when the file is
+    # empty or pre-dates holder records.
+    try:
+        with open(lock_path) as fh:
+            data = fh.read().strip()
+        if not data:
+            return None
+        parsed = json.loads(data)
+        return parsed if isinstance(parsed, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def cmd_locks(args) -> int:
     lock_path = f"{args.db}.worker.lock"
     exists = os.path.exists(lock_path)
@@ -244,15 +258,40 @@ def cmd_locks(args) -> int:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         except (OSError, ImportError):
             held = True
+    holder = _read_holder(lock_path) if exists else None
     if args.json:
         print(
-            json.dumps({"lock_file": lock_path, "exists": exists, "worker_holding": held}, indent=2)
+            json.dumps(
+                {
+                    "lock_file": lock_path,
+                    "exists": exists,
+                    "worker_holding": held,
+                    "holder": holder,
+                },
+                indent=2,
+            )
         )
         return EXIT_OK
     print(f"worker lock: {lock_path}")
     print(f"  file exists:  {exists}")
     print(f"  held by live worker: {held}")
+    if holder:
+        print(
+            f"  holder:       pid={holder.get('pid')} host={holder.get('host')} "
+            f"since={holder.get('acquired_at')}"
+        )
     return EXIT_OK
+
+
+def cmd_unlock(args) -> int:
+    result = WorkerLock.unlock(args.db, force=args.force)
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    elif result["removed"]:
+        print(f"removed worker lock {args.db}.worker.lock ({result['reason']})")
+    else:
+        print(f"lock not removed: {result['reason']}", file=sys.stderr)
+    return EXIT_OK if result["removed"] else EXIT_ERROR
 
 
 def cmd_lease_reclaim(args) -> int:
@@ -314,8 +353,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("vacuum", help="VACUUM the SQLite database")
     p.set_defaults(func=cmd_vacuum)
 
-    p = sub.add_parser("locks", help="show worker lock state")
+    p = sub.add_parser("locks", help="show worker lock state + holder identity")
     p.set_defaults(func=cmd_locks)
+
+    p = sub.add_parser(
+        "unlock", help="remove a stale worker lock file (refuses while a live holder holds it)"
+    )
+    p.add_argument("--force", action="store_true", help="remove even if the holder looks alive")
+    p.set_defaults(func=cmd_unlock)
 
     p = sub.add_parser("lease-reclaim", help="requeue jobs whose claims expired")
     p.set_defaults(func=cmd_lease_reclaim)
