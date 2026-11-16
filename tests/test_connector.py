@@ -56,7 +56,11 @@ async def test_runner_enqueues_specs_and_commits(flow):
     async with flow.run():
         await _wait_until(lambda: conn.commit_calls >= 1)
         await _wait_until(lambda: flow.stats().by_status.get("succeeded", 0) >= 1)
-        assert conn.done_calls and conn.done_calls[0][2] == "ref://done"
+        # done_calls lands via the post-commit ack callback + connector task
+        # wakeup — one scheduling beat after "succeeded" is visible, so it
+        # must be waited for too (flaked as a bare assert under load).
+        await _wait_until(lambda: bool(conn.done_calls))
+        assert conn.done_calls[0][2] == "ref://done"
 
 
 async def test_queue_full_fails_round_and_never_commits(db_path, fake_clock):
